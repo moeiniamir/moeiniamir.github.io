@@ -125,6 +125,13 @@
                 </tr>
                 </tbody>
             </table>
+
+            <div id="cartpole-wrapper">
+                <div id="cartpole-container" style="width: 100%; height: 400px; margin: 40px 0; border-radius: 8px; background-color: #f8f8f8; overflow: hidden;">
+                    <svg id="cartpole-drawing" width="100%" height="400"></svg>
+                </div>
+            </div>
+            
             <table>
                 <tbody>
                 <tr>
@@ -141,6 +148,139 @@
         </td>
     </tr>
 </table>
+
+<!-- CartPole Scripts -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<script src="scripts/mouseFollowingCartpole.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Function to gracefully hide the container
+        function hideContainer(reason = 'Unknown reason') {
+            console.error(`[CartPole] Hiding container: ${reason}`);
+            
+            const wrapper = document.getElementById('cartpole-wrapper');
+            if (!wrapper) return;
+            
+            wrapper.style.transition = 'opacity 0.5s ease';
+            wrapper.style.opacity = 0;
+            setTimeout(() => {
+                wrapper.style.display = 'none';
+                wrapper.style.margin = 0;
+                wrapper.style.height = 0;
+            }, 500);
+        }
+        
+        // Check if device is mobile or has no mouse
+        function isMobileOrNoMouse() {
+            // Check for touch capability (most mobile devices)
+            const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            
+            // Check for small screen (typical for mobile)
+            const isSmallScreen = window.innerWidth < 768;
+            
+            // Check user agent for mobile devices
+            const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+            const isMobileUserAgent = mobileRegex.test(navigator.userAgent);
+            
+            return hasTouch || isSmallScreen || isMobileUserAgent;
+        }
+        
+        // Hide container immediately if on mobile/no mouse
+        if (isMobileOrNoMouse()) {
+            console.error('[CartPole] Mobile or no-mouse device detected. Not showing demo.');
+            const wrapper = document.getElementById('cartpole-wrapper');
+            if (wrapper) {
+                wrapper.style.display = 'none';
+                wrapper.style.margin = 0;
+                wrapper.style.height = 0;
+            }
+            return; // Exit early
+        }
+        
+        try {
+            const svgContainer = d3.select("#cartpole-drawing");
+            const cartpole = new MouseFollowingCartPole(svgContainer, {svgHeight: 400});
+            cartpole.reset();
+            
+            const cartpoleContainer = document.getElementById('cartpole-container');
+            let currentMouseX = 0;
+            const xThreshold = cartpole.options.x_threshold;
+            
+            // Track mouse movement across the entire document
+            document.addEventListener('mousemove', (event) => {
+                // Calculate mouse position as percentage across entire window width
+                const mouseXPercent = event.clientX / window.innerWidth;
+                
+                // Map to cartpole range (-threshold to +threshold)
+                currentMouseX = ((mouseXPercent * 2) - 1) * xThreshold;
+                
+                // Apply bounds
+                currentMouseX = Math.max(-xThreshold, Math.min(xThreshold, currentMouseX));
+            });
+            
+            let session;
+            let modelLoaded = false;
+            
+            const loadingMessage = document.createElement('div');
+            loadingMessage.textContent = 'Loading RL model...';
+            loadingMessage.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#333;font-size:16px;';
+            cartpoleContainer.appendChild(loadingMessage);
+            
+            (async function loadModel() {
+                try {
+                    session = await ort.InferenceSession.create(
+                        'data/ppo_mouse_following_m5qrhy1t.onnx', 
+                        { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }
+                    );
+                    modelLoaded = true;
+                    loadingMessage.style.display = 'none';
+                } catch (error) {
+                    console.error('Error loading model:', error);
+                    // Hide the container if model loading fails
+                    hideContainer(`Model loading failed: ${error.message}`);
+                }
+            })();
+            
+            async function getActionFromModel(observation) {
+                if (!modelLoaded) return Math.random() > 0.5 ? 1 : 0;
+                
+                try {
+                    const inputTensor = new ort.Tensor('float32', new Float32Array(observation), [1, observation.length]);
+                    const outputMap = await session.run({ [session.inputNames[0]]: inputTensor });
+                    return outputMap['70'].data[0] > 0 ? 1 : 0;
+                } catch (error) {
+                    console.error('Inference error:', error);
+                    // Hide the container if inference fails
+                    hideContainer(`Model inference failed: ${error.message}`);
+                    return 0;
+                }
+            }
+            
+            const stepInterval = cartpole.options.tau * 1000;
+            
+            (function loop() {
+                setTimeout(async () => {
+                    try {
+                        cartpole.updateMousePosition(currentMouseX);
+                        const action = await getActionFromModel(cartpole.getStackedObservation());
+                        cartpole.step(action);
+                        cartpole.render(stepInterval);
+                        loop();
+                    } catch (error) {
+                        console.error('Animation loop error:', error);
+                        // Hide the container if any error occurs during simulation
+                        hideContainer(`Animation loop error: ${error.message}`);
+                    }
+                }, stepInterval);
+            })();
+        } catch (error) {
+            // Hide the container if any initialization error occurs
+            console.error('Initialization error:', error);
+            hideContainer(`Initialization error: ${error.message}`);
+        }
+    });
+</script>
 </body>
 
 </html>
