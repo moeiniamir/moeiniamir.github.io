@@ -209,14 +209,9 @@
             
             // Track mouse movement across the entire document
             document.addEventListener('mousemove', (event) => {
-                // Calculate mouse position as percentage across entire window width
-                const mouseXPercent = event.clientX / window.innerWidth;
-                
-                // Map to cartpole range (-threshold to +threshold)
-                currentMouseX = ((mouseXPercent * 2) - 1) * xThreshold;
-                
-                // Apply bounds
-                currentMouseX = Math.max(-xThreshold, Math.min(xThreshold, currentMouseX));
+                const containerRect = cartpoleContainer.getBoundingClientRect();
+                const relativeX = Math.min(Math.max(0, event.clientX - containerRect.left), containerRect.width);
+                currentMouseX = ((relativeX / containerRect.width) * 2 - 1) * xThreshold;
             });
             
             let session;
